@@ -259,23 +259,7 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
 resource "aws_iam_role" "snowflake_integration_role" {
   name = "${var.project_name}-snowflake-integration-role"
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          AWS = var.snowflake_role_arn
-        }
-        Action = "sts:AssumeRole"
-        Condition = {
-          StringEquals = {
-            "sts:ExternalId" = "snowflake_external_id"
-          }
-        }
-      }
-    ]
-  })
+  assume_role_policy = file("../fix_snowflake_trust_policy.json")
 
   tags = {
     Name        = "${var.project_name}-snowflake-role"

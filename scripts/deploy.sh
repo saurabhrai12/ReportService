@@ -219,6 +219,7 @@ run_deployment_tests() {
     log_info "Testing Lambda function: $lambda_function"
     aws lambda invoke \
         --function-name "$lambda_function" \
+        --cli-binary-format raw-in-base64-out \
         --payload '{"resource": "/trigger/adhoc", "pathParameters": {"trigger_type": "adhoc"}, "httpMethod": "POST"}' \
         --region "$AWS_REGION" \
         lambda_test_output.json
