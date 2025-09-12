@@ -1,0 +1,95 @@
+# Docker Compose for local development and testing
+version: '3.8'
+
+services:
+  report-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VERSION: ${VERSION:-dev}
+        VCS_REF: ${VCS_REF:-$(git rev-parse HEAD)}
+    
+    container_name: report-service-dev
+    
+    environment:
+      # Snowflake Configuration
+      SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+      SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+      SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-your-account}
+      SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-REPORTING_DB}
+      SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA:-CONFIG}
+      SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-COMPUTE_WH}
+      
+      # AWS Configuration
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      
+      # Service Configuration
+      SERVICE_MODE: TRIGGER_BASED
+      REPORTS_BUCKET: ${REPORTS_BUCKET:-your-reports-bucket}
+      ECS_SERVICE_ARN: ${ECS_SERVICE_ARN:-arn:aws:ecs:us-east-1:123456789:service/report-service}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    
+    volumes:
+      # Mount source code for development
+      - ./src:/app/src
+      - ./logs:/app/logs
+    
+    ports:
+      - "8080:8080"
+    
+    # Resource limits for development
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; print('Health check passed'); sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: LocalStack for AWS service mocking during development
+  localstack:
+    image: localstack/localstack:2.3
+    container_name: localstack-dev
+    environment:
+      - SERVICES=s3,ecs,sns,secretsmanager
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    ports:
+      - "4566:4566"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./localstack-data:/tmp/localstack"
+    profiles:
+      - localstack
+
+networks:
+  default:
+    name: report-service-network

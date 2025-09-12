@@ -1,0 +1,8 @@
+{
+  "resource": "/trigger/scheduled",
+  "pathParameters": {
+    "trigger_type": "scheduled"
+  },
+  "httpMethod": "POST",
+  "body": "{\"trigger_type\": \"SCHEDULED\", \"source\": \"test\"}"
+}

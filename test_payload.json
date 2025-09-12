@@ -1,0 +1,8 @@
+{
+  "resource": "/trigger/adhoc",
+  "pathParameters": {
+    "trigger_type": "adhoc"
+  },
+  "httpMethod": "POST",
+  "body": "{\"trigger_type\": \"ADHOC\", \"source\": \"test\"}"
+}
