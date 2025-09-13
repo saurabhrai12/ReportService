@@ -1,152 +1,41 @@
--- Snowflake Streams Setup for Change Detection
--- This script creates streams to monitor changes in the report configuration table
--- Separate streams for ADHOC and SCHEDULED triggers for optimized processing
+-- Snowflake Streams Setup for Change Detection (Simplified)
+-- This script creates a single stream to monitor all new report insertions.
 
 USE REPORTING_DB.CONFIG;
 
 -- Drop existing streams if they exist (for clean setup)
-DROP STREAM IF EXISTS REPORTING_DB.CONFIG.REPORT_CONFIG_ADHOC_STREAM;
-DROP STREAM IF EXISTS REPORTING_DB.CONFIG.REPORT_CONFIG_SCHEDULED_STREAM;
-DROP STREAM IF EXISTS REPORTING_DB.CONFIG.REPORT_CONFIG_ALL_STREAM;
+DROP STREAM IF EXISTS REPORTING_DB.CONFIG.REPORT_CONFIG_INSERT_STREAM; -- Drop new one too for idempotency
 
--- Create stream for ADHOC report changes (immediate processing)
--- This stream captures INSERT operations for ADHOC reports only
-CREATE STREAM REPORTING_DB.CONFIG.REPORT_CONFIG_ADHOC_STREAM 
+-- Create a single stream for all new report insertions
+CREATE STREAM REPORTING_DB.CONFIG.REPORT_CONFIG_INSERT_STREAM
 ON TABLE REPORTING_DB.CONFIG.REPORT_CONFIG
-APPEND_ONLY = TRUE  -- Only capture INSERTs for new ADHOC reports
-COMMENT = 'Stream for monitoring ADHOC report insertions - triggers immediate processing';
+APPEND_ONLY = TRUE  -- Only capture INSERTs for new reports
+COMMENT = 'Unified stream for monitoring all new report insertions.';
 
--- Create stream for SCHEDULED report changes (time-based processing)  
--- This stream captures INSERT operations for SCHEDULED reports only
-CREATE STREAM REPORTING_DB.CONFIG.REPORT_CONFIG_SCHEDULED_STREAM 
-ON TABLE REPORTING_DB.CONFIG.REPORT_CONFIG
-APPEND_ONLY = TRUE  -- Only capture INSERTs for new SCHEDULED reports
-COMMENT = 'Stream for monitoring SCHEDULED report insertions and updates';
-
--- Create a general stream for all changes (for monitoring and auditing)
-CREATE STREAM REPORTING_DB.CONFIG.REPORT_CONFIG_ALL_STREAM 
-ON TABLE REPORTING_DB.CONFIG.REPORT_CONFIG
-COMMENT = 'Stream for monitoring all changes to report configuration table';
-
--- Create views to filter stream data by trigger type
-
--- View for ADHOC stream data (only ADHOC reports)
-CREATE OR REPLACE VIEW REPORTING_DB.CONFIG.V_ADHOC_STREAM_DATA AS
-SELECT 
+-- Create a view for the new stream data
+CREATE OR REPLACE VIEW REPORTING_DB.CONFIG.V_INSERT_STREAM_DATA AS
+SELECT
     CONFIG_ID,
     REPORT_NAME,
-    REPORT_TYPE,
     TRIGGER_TYPE,
-    PRIORITY,
     STATUS,
     CREATED_TIMESTAMP,
     METADATA$ACTION,
     METADATA$ISUPDATE,
     METADATA$ROW_ID
-FROM REPORTING_DB.CONFIG.REPORT_CONFIG_ADHOC_STREAM 
-WHERE TRIGGER_TYPE = 'ADHOC' 
-  AND METADATA$ACTION = 'INSERT'
-  AND STATUS = 'PENDING'
-  AND IS_ACTIVE = TRUE;
+FROM REPORTING_DB.CONFIG.REPORT_CONFIG_INSERT_STREAM
+WHERE METADATA$ACTION = 'INSERT';
 
--- View for SCHEDULED stream data (only SCHEDULED reports)
-CREATE OR REPLACE VIEW REPORTING_DB.CONFIG.V_SCHEDULED_STREAM_DATA AS
-SELECT 
-    CONFIG_ID,
-    REPORT_NAME,
-    REPORT_TYPE,
-    TRIGGER_TYPE,
-    SCHEDULE_EXPRESSION,
-    NEXT_RUN_TIME,
-    STATUS,
-    CREATED_TIMESTAMP,
-    METADATA$ACTION,
-    METADATA$ISUPDATE,
-    METADATA$ROW_ID
-FROM REPORTING_DB.CONFIG.REPORT_CONFIG_SCHEDULED_STREAM 
-WHERE TRIGGER_TYPE = 'SCHEDULED' 
-  AND METADATA$ACTION = 'INSERT'
-  AND STATUS = 'PENDING'
-  AND IS_ACTIVE = TRUE;
-
--- Utility view to check if streams have data
+-- Utility view to check if the stream has data
 CREATE OR REPLACE VIEW REPORTING_DB.CONFIG.V_STREAM_STATUS AS
-SELECT 
-    'ADHOC' as STREAM_TYPE,
-    SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_ADHOC_STREAM') as HAS_DATA,
-    (SELECT COUNT(*) FROM REPORTING_DB.CONFIG.V_ADHOC_STREAM_DATA) as PENDING_COUNT,
-    CURRENT_TIMESTAMP() as CHECKED_AT
-UNION ALL
-SELECT 
-    'SCHEDULED' as STREAM_TYPE,
-    SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_SCHEDULED_STREAM') as HAS_DATA,
-    (SELECT COUNT(*) FROM REPORTING_DB.CONFIG.V_SCHEDULED_STREAM_DATA) as PENDING_COUNT,
-    CURRENT_TIMESTAMP() as CHECKED_AT
-UNION ALL
-SELECT 
-    'ALL_CHANGES' as STREAM_TYPE,
-    SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_ALL_STREAM') as HAS_DATA,
-    (SELECT COUNT(*) FROM REPORTING_DB.CONFIG.REPORT_CONFIG_ALL_STREAM) as PENDING_COUNT,
+SELECT
+    'UNIFIED_INSERT' as STREAM_TYPE,
+    SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_INSERT_STREAM') as HAS_DATA,
+    (SELECT COUNT(*) FROM REPORTING_DB.CONFIG.V_INSERT_STREAM_DATA) as PENDING_COUNT,
     CURRENT_TIMESTAMP() as CHECKED_AT;
-
--- Create a stored procedure to manually check stream status
-CREATE OR REPLACE PROCEDURE REPORTING_DB.CONFIG.CHECK_STREAM_STATUS()
-RETURNS VARCHAR
-LANGUAGE SQL
-AS
-$$
-BEGIN
-    LET result_cursor CURSOR FOR SELECT 
-        STREAM_TYPE,
-        HAS_DATA,
-        PENDING_COUNT,
-        CHECKED_AT
-    FROM REPORTING_DB.CONFIG.V_STREAM_STATUS;
-    
-    RETURN 'Stream status check completed. Query V_STREAM_STATUS view for results.';
-END;
-$$;
-
--- Create a stored procedure to peek at stream data without consuming it
-CREATE OR REPLACE PROCEDURE REPORTING_DB.CONFIG.PEEK_ADHOC_STREAM()
-RETURNS VARCHAR
-LANGUAGE SQL
-AS
-$$
-BEGIN
-    RETURN 'ADHOC stream peek completed. Query V_ADHOC_STREAM_DATA view for results.';
-END;
-$$;
-
-CREATE OR REPLACE PROCEDURE REPORTING_DB.CONFIG.PEEK_SCHEDULED_STREAM()
-RETURNS VARCHAR
-LANGUAGE SQL
-AS
-$$
-BEGIN
-    RETURN 'SCHEDULED stream peek completed. Query V_SCHEDULED_STREAM_DATA view for results.';
-END;
-$$;
 
 -- Show stream information
 SHOW STREAMS IN SCHEMA REPORTING_DB.CONFIG;
 
--- Test the streams by checking their status
+-- Test the stream by checking its status
 SELECT * FROM REPORTING_DB.CONFIG.V_STREAM_STATUS;
-
--- Examples of checking stream data:
-
--- Check if ADHOC stream has data
--- SELECT SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_ADHOC_STREAM');
-
--- Check if SCHEDULED stream has data  
--- SELECT SYSTEM$STREAM_HAS_DATA('REPORTING_DB.CONFIG.REPORT_CONFIG_SCHEDULED_STREAM');
-
--- Peek at ADHOC stream data (without consuming)
--- CALL REPORTING_DB.CONFIG.PEEK_ADHOC_STREAM();
-
--- Peek at SCHEDULED stream data (without consuming) 
--- CALL REPORTING_DB.CONFIG.PEEK_SCHEDULED_STREAM();
-
--- Check overall stream status
--- CALL REPORTING_DB.CONFIG.CHECK_STREAM_STATUS();

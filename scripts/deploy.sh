@@ -158,46 +158,48 @@ update_snowflake_config() {
     
     cd "$TERRAFORM_DIR"
     
-    # Get API Gateway URLs from Terraform output
-    local adhoc_url=$(terraform output -raw trigger_adhoc_url)
-    local scheduled_url=$(terraform output -raw trigger_scheduled_url)
+    # Get API Gateway URL from Terraform output
+    local trigger_url=$(terraform output -raw trigger_url)
     local snowflake_role_arn=$(terraform output -raw snowflake_integration_role_arn)
     local api_gateway_id=$(terraform output -raw api_gateway_id)
     
     cd ..
     
-    log_info "API Gateway URLs:"
-    log_info "  ADHOC: $adhoc_url"
-    log_info "  SCHEDULED: $scheduled_url"
+    log_info "API Gateway URL:"
+    log_info "  Trigger URL: $trigger_url"
     log_info "  Snowflake Role ARN: $snowflake_role_arn"
     
     # Extract account ID and API Gateway ID for Snowflake script
     local account_id=$(echo "$snowflake_role_arn" | cut -d':' -f5)
     
-    # Create updated Snowflake integration script
-    local temp_script="/tmp/snowflake_integration_updated.sql"
-    
+    # Define the path for the final, ready-to-run Snowflake script
+    local final_script="$SNOWFLAKE_DIR/run_after_deploy.sql"
+
+    log_info "Creating final Snowflake script with updated variables at: $final_script"
+
+    # Replace placeholders in the template file and save to the new path
     sed "s/YOUR_ACCOUNT/$account_id/g; s/YOUR_API_GATEWAY_ID/$api_gateway_id/g" \
-        "$SNOWFLAKE_DIR/05_api_integration_setup.sql" > "$temp_script"
+        "$SNOWFLAKE_DIR/05_api_integration_setup.sql" > "$final_script"
+
+    log_success "Successfully created $final_script"
+    log_warning "Please run the contents of '$final_script' in your Snowflake environment to complete the integration."
     
     log_warning "Snowflake integration script updated at: $temp_script"
     log_warning "Please run this script in your Snowflake environment to complete the integration."
     
-    # Save URLs to a file for reference
+    # Save URL to a file for reference
     cat > deployment_urls.txt << EOF
-# Deployment URLs and Information
+# Deployment URL and Information
 # Generated on: $(date)
 
-ADHOC Trigger URL: $adhoc_url
-SCHEDULED Trigger URL: $scheduled_url
+Trigger URL: $trigger_url
 Snowflake Role ARN: $snowflake_role_arn
 API Gateway ID: $api_gateway_id
 AWS Account ID: $account_id
 
 # Next Steps:
-1. Run the updated Snowflake integration script: $temp_script
-2. Update your Snowflake secrets with the correct URLs
-3. Test the integration using the Snowflake test procedures
+1. Run the generated Snowflake script to finalize the integration: $final_script
+2. Test the integration using the Snowflake test procedures
 EOF
     
     log_success "Snowflake configuration prepared. See deployment_urls.txt for details."

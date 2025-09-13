@@ -1,13 +1,11 @@
-# Deployment URLs and Information
-# Generated on: Sat Sep 13 07:07:03 IST 2025
+# Deployment URL and Information
+# Generated on: Sat Sep 13 12:12:55 IST 2025
 
-ADHOC Trigger URL: https://fe44m0t8ah.execute-api.us-east-1.amazonaws.com/prod/trigger/adhoc
-SCHEDULED Trigger URL: https://fe44m0t8ah.execute-api.us-east-1.amazonaws.com/prod/trigger/scheduled
+Trigger URL: https://fiioucx729.execute-api.us-east-1.amazonaws.com/prod/trigger
 Snowflake Role ARN: arn:aws:iam::203977009513:role/report-service-snowflake-integration-role
-API Gateway ID: fe44m0t8ah
+API Gateway ID: fiioucx729
 AWS Account ID: 203977009513
 
 # Next Steps:
-1. Run the updated Snowflake integration script: /tmp/snowflake_integration_updated.sql
-2. Update your Snowflake secrets with the correct URLs
-3. Test the integration using the Snowflake test procedures
+1. Run the generated Snowflake script to finalize the integration: snowflake/run_after_deploy.sql
+2. Test the integration using the Snowflake test procedures

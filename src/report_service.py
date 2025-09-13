@@ -123,103 +123,48 @@ class EnhancedReportService:
             logger.error(f"Connection validation failed: {e}")
             return False
             
-    def check_for_adhoc_work(self) -> int:
-        """Check for ADHOC reports that need processing"""
+    def check_for_work(self) -> int:
+        """Check for any reports that need processing."""
         try:
             conn = self.get_snowflake_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
                 SELECT COUNT(*) 
-                FROM REPORTING_DB.CONFIG.V_PENDING_ADHOC_REPORTS
+                FROM REPORTING_DB.CONFIG.V_PENDING_REPORTS
             """)
             
             count = cursor.fetchone()[0]
             cursor.close()
             conn.close()
             
-            logger.debug(f"Found {count} pending ADHOC reports")
+            logger.debug(f"Found {count} pending reports.")
             return count
             
         except Exception as e:
-            logger.error(f"Error checking for ADHOC work: {e}")
+            logger.error(f"Error checking for work: {e}")
             return 0
             
-    def check_for_scheduled_work(self) -> int:
-        """Check for SCHEDULED reports that are due"""
-        try:
-            conn = self.get_snowflake_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM REPORTING_DB.CONFIG.V_DUE_SCHEDULED_REPORTS
-            """)
-            
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-            
-            logger.debug(f"Found {count} due SCHEDULED reports")
-            return count
-            
-        except Exception as e:
-            logger.error(f"Error checking for SCHEDULED work: {e}")
-            return 0
-            
-    def get_adhoc_reports(self) -> List[Dict[str, Any]]:
-        """Get pending ADHOC reports ordered by priority"""
+    def get_pending_reports(self) -> List[Dict[str, Any]]:
+        """Get all pending reports, ordered by priority and creation time."""
         try:
             conn = self.get_snowflake_connection()
             cursor = conn.cursor(DictCursor)
             
+            # The V_PENDING_REPORTS view is already ordered by priority and creation time
             cursor.execute("""
-                SELECT 
-                    CONFIG_ID, REPORT_NAME, REPORT_TYPE, PRIORITY,
-                    REPORT_CONFIG, OUTPUT_FORMAT,
-                    NOTIFY_ON_COMPLETION, NOTIFICATION_RECIPIENTS,
-                    CREATED_TIMESTAMP
-                FROM REPORTING_DB.CONFIG.V_PENDING_ADHOC_REPORTS
-                ORDER BY PRIORITY ASC, CREATED_TIMESTAMP DESC
+                SELECT * FROM REPORTING_DB.CONFIG.V_PENDING_REPORTS
             """)
             
             reports = cursor.fetchall()
             cursor.close()
             conn.close()
             
-            logger.info(f"Retrieved {len(reports)} ADHOC reports")
+            logger.info(f"Retrieved {len(reports)} pending reports.")
             return reports
             
         except Exception as e:
-            logger.error(f"Error getting ADHOC reports: {e}")
-            return []
-            
-    def get_scheduled_reports(self) -> List[Dict[str, Any]]:
-        """Get due SCHEDULED reports ordered by due time"""
-        try:
-            conn = self.get_snowflake_connection()
-            cursor = conn.cursor(DictCursor)
-            
-            cursor.execute("""
-                SELECT 
-                    CONFIG_ID, REPORT_NAME, REPORT_TYPE, 
-                    SCHEDULE_EXPRESSION, NEXT_RUN_TIME, LAST_RUN_TIME,
-                    REPORT_CONFIG, OUTPUT_FORMAT,
-                    NOTIFY_ON_COMPLETION, NOTIFICATION_RECIPIENTS,
-                    CREATED_TIMESTAMP
-                FROM REPORTING_DB.CONFIG.V_DUE_SCHEDULED_REPORTS
-                ORDER BY NEXT_RUN_TIME ASC NULLS FIRST
-            """)
-            
-            reports = cursor.fetchall()
-            cursor.close()
-            conn.close()
-            
-            logger.info(f"Retrieved {len(reports)} due SCHEDULED reports")
-            return reports
-            
-        except Exception as e:
-            logger.error(f"Error getting SCHEDULED reports: {e}")
+            logger.error(f"Error getting pending reports: {e}")
             return []
             
     def update_report_status(self, config_id: str, status: str, error_message: Optional[str] = None) -> bool:
@@ -432,13 +377,14 @@ Report failed:
         except Exception as e:
             logger.error(f"Failed to send notification: {e}")
             
-    def process_adhoc_reports(self) -> int:
-        """Process all pending ADHOC reports with high priority"""
-        reports = self.get_adhoc_reports()
+    def process_reports(self) -> int:
+        """Process all pending reports."""
+        reports = self.get_pending_reports()
         processed_count = 0
         
         for report in reports:
             config_id = report['CONFIG_ID']
+            trigger_type = report['TRIGGER_TYPE']
             
             try:
                 # Update status to processing
@@ -446,13 +392,20 @@ Report failed:
                     continue
                     
                 # Generate the report
-                success, result = self.generate_report(report, 'ADHOC')
+                success, result = self.generate_report(report, trigger_type)
                 
                 if success:
                     # Update to completed
                     self.update_report_status(config_id, 'COMPLETED')
+                    
+                    # For scheduled reports, update their next run time
+                    if trigger_type == 'SCHEDULED':
+                        self.update_scheduled_report_times(config_id)
+                        self.stats['scheduled_processed'] += 1
+                    else:
+                        self.stats['adhoc_processed'] += 1
+                        
                     processed_count += 1
-                    self.stats['adhoc_processed'] += 1
                     
                 else:
                     # Update to failed
@@ -460,43 +413,7 @@ Report failed:
                     self.stats['errors'] += 1
                     
             except Exception as e:
-                logger.error(f"Error processing ADHOC report {config_id}: {e}")
-                self.update_report_status(config_id, 'FAILED', str(e))
-                self.stats['errors'] += 1
-                
-        self.stats['total_processed'] += processed_count
-        return processed_count
-        
-    def process_scheduled_reports(self) -> int:
-        """Process all due SCHEDULED reports in batch mode"""
-        reports = self.get_scheduled_reports()
-        processed_count = 0
-        
-        for report in reports:
-            config_id = report['CONFIG_ID']
-            
-            try:
-                # Update status to processing
-                if not self.update_report_status(config_id, 'PROCESSING'):
-                    continue
-                    
-                # Generate the report
-                success, result = self.generate_report(report, 'SCHEDULED')
-                
-                if success:
-                    # Update to completed and calculate next run time
-                    self.update_report_status(config_id, 'COMPLETED')
-                    self.update_scheduled_report_times(config_id)
-                    processed_count += 1
-                    self.stats['scheduled_processed'] += 1
-                    
-                else:
-                    # Update to failed
-                    self.update_report_status(config_id, 'FAILED', result)
-                    self.stats['errors'] += 1
-                    
-            except Exception as e:
-                logger.error(f"Error processing SCHEDULED report {config_id}: {e}")
+                logger.error(f"Error processing report {config_id}: {e}")
                 self.update_report_status(config_id, 'FAILED', str(e))
                 self.stats['errors'] += 1
                 
@@ -510,7 +427,13 @@ Report failed:
                 logger.warning("ECS_SERVICE_ARN not set, cannot auto-scale")
                 return
                 
+            # Parse cluster name from service ARN
+            # ARN format: arn:aws:ecs:region:account:service/cluster-name/service-name
+            arn_parts = self.ecs_service_arn.split('/')
+            cluster_name = arn_parts[-2] if len(arn_parts) >= 3 else 'default'
+
             self.ecs_client.update_service(
+                cluster=cluster_name,
                 service=self.ecs_service_arn,
                 desiredCount=0
             )
@@ -530,7 +453,7 @@ Report failed:
             logger.error(f"Error scaling down: {e}")
             
     def run(self) -> None:
-        """Enhanced main service loop with dual trigger type handling"""
+        """Main service loop with unified report processing."""
         logger.info("Enhanced Report Service started")
         
         # Validate configuration
@@ -539,43 +462,28 @@ Report failed:
             sys.exit(1)
             
         try:
+            # The service will now process all available work and then exit.
+            # The while loop will run as long as new work is found after a processing cycle.
             while self.running:
-                # Check for both types of work
-                adhoc_count = self.check_for_adhoc_work()
-                scheduled_count = self.check_for_scheduled_work()
+                work_count = self.check_for_work()
                 
-                total_processed = 0
+                if work_count > 0:
+                    logger.info(f"Found {work_count} reports to process...")
+                    self.process_reports()
+                    
+                    # After processing, re-check for any new work that arrived.
+                    # If there's still work, the loop will continue.
+                    continue 
                 
-                # Process ADHOC reports first (higher priority)
-                if adhoc_count > 0:
-                    logger.info(f"Processing {adhoc_count} ADHOC reports with high priority...")
-                    processed = self.process_adhoc_reports()
-                    total_processed += processed
-                    logger.info(f"Processed {processed} ADHOC reports")
-                    
-                # Process SCHEDULED reports (batch mode)
-                if scheduled_count > 0:
-                    logger.info(f"Processing {scheduled_count} SCHEDULED reports in batch mode...")
-                    processed = self.process_scheduled_reports()
-                    total_processed += processed
-                    logger.info(f"Processed {processed} SCHEDULED reports")
-                    
-                # Check if there's more work after processing
-                if total_processed > 0:
-                    # Quick recheck for new work
-                    adhoc_count = self.check_for_adhoc_work()
-                    scheduled_count = self.check_for_scheduled_work()
-                    
-                # If no work available, scale down
-                if adhoc_count == 0 and scheduled_count == 0:
-                    logger.info("No work available, scaling down...")
-                    self.scale_down_when_idle()
-                    break
-                    
-                
+                # If no work was found, or after processing and finding no new work
+                logger.info("No more work available, scaling down...")
+                self.scale_down_when_idle()
+                break # Exit the loop and the script
                 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
+            # Attempt to scale down even if there was an error in the main loop
+            self.scale_down_when_idle()
             
         logger.info("Enhanced Report Service stopping")
 

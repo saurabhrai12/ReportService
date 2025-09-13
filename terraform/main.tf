@@ -500,66 +500,36 @@ resource "aws_api_gateway_resource" "trigger_resource" {
   path_part   = "trigger"
 }
 
-resource "aws_api_gateway_resource" "adhoc_resource" {
-  rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  parent_id   = aws_api_gateway_resource.trigger_resource.id
-  path_part   = "adhoc"
-}
-
-resource "aws_api_gateway_resource" "scheduled_resource" {
-  rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  parent_id   = aws_api_gateway_resource.trigger_resource.id
-  path_part   = "scheduled"
-}
-
-# Methods for ADHOC triggers
-resource "aws_api_gateway_method" "adhoc_method" {
+# Method for the unified trigger
+resource "aws_api_gateway_method" "trigger_method" {
   rest_api_id   = aws_api_gateway_rest_api.trigger_api.id
-  resource_id   = aws_api_gateway_resource.adhoc_resource.id
+  resource_id   = aws_api_gateway_resource.trigger_resource.id
   http_method   = "POST"
   authorization = "AWS_IAM"
 }
 
-resource "aws_api_gateway_integration" "adhoc_lambda_integration" {
+resource "aws_api_gateway_integration" "lambda_integration" {
   rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  resource_id = aws_api_gateway_resource.adhoc_resource.id
-  http_method = aws_api_gateway_method.adhoc_method.http_method
+  resource_id = aws_api_gateway_resource.trigger_resource.id
+  http_method = aws_api_gateway_method.trigger_method.http_method
 
   integration_http_method = "POST"
-  type                   = "AWS_PROXY"
-  uri                    = aws_lambda_function.trigger_lambda.invoke_arn
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.trigger_lambda.invoke_arn
 }
 
-# Methods for SCHEDULED triggers
-resource "aws_api_gateway_method" "scheduled_method" {
+# OPTIONS method for CORS support
+resource "aws_api_gateway_method" "trigger_options" {
   rest_api_id   = aws_api_gateway_rest_api.trigger_api.id
-  resource_id   = aws_api_gateway_resource.scheduled_resource.id
-  http_method   = "POST"
-  authorization = "AWS_IAM"
-}
-
-resource "aws_api_gateway_integration" "scheduled_lambda_integration" {
-  rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  resource_id = aws_api_gateway_resource.scheduled_resource.id
-  http_method = aws_api_gateway_method.scheduled_method.http_method
-
-  integration_http_method = "POST"
-  type                   = "AWS_PROXY"
-  uri                    = aws_lambda_function.trigger_lambda.invoke_arn
-}
-
-# OPTIONS methods for CORS support
-resource "aws_api_gateway_method" "adhoc_options" {
-  rest_api_id   = aws_api_gateway_rest_api.trigger_api.id
-  resource_id   = aws_api_gateway_resource.adhoc_resource.id
+  resource_id   = aws_api_gateway_resource.trigger_resource.id
   http_method   = "OPTIONS"
   authorization = "NONE"
 }
 
-resource "aws_api_gateway_integration" "adhoc_options_integration" {
+resource "aws_api_gateway_integration" "options_integration" {
   rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  resource_id = aws_api_gateway_resource.adhoc_resource.id
-  http_method = aws_api_gateway_method.adhoc_options.http_method
+  resource_id = aws_api_gateway_resource.trigger_resource.id
+  http_method = aws_api_gateway_method.trigger_options.http_method
   type        = "MOCK"
 
   request_templates = {
@@ -569,10 +539,10 @@ resource "aws_api_gateway_integration" "adhoc_options_integration" {
   }
 }
 
-resource "aws_api_gateway_method_response" "adhoc_options_response" {
+resource "aws_api_gateway_method_response" "options_response" {
   rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  resource_id = aws_api_gateway_resource.adhoc_resource.id
-  http_method = aws_api_gateway_method.adhoc_options.http_method
+  resource_id = aws_api_gateway_resource.trigger_resource.id
+  http_method = aws_api_gateway_method.trigger_options.http_method
   status_code = "200"
 
   response_parameters = {
@@ -582,11 +552,11 @@ resource "aws_api_gateway_method_response" "adhoc_options_response" {
   }
 }
 
-resource "aws_api_gateway_integration_response" "adhoc_options_integration_response" {
+resource "aws_api_gateway_integration_response" "options_integration_response" {
   rest_api_id = aws_api_gateway_rest_api.trigger_api.id
-  resource_id = aws_api_gateway_resource.adhoc_resource.id
-  http_method = aws_api_gateway_method.adhoc_options.http_method
-  status_code = aws_api_gateway_method_response.adhoc_options_response.status_code
+  resource_id = aws_api_gateway_resource.trigger_resource.id
+  http_method = aws_api_gateway_method.trigger_options.http_method
+  status_code = aws_api_gateway_method_response.options_response.status_code
 
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
@@ -595,11 +565,20 @@ resource "aws_api_gateway_integration_response" "adhoc_options_integration_respo
   }
 }
 
+
+
+
+
+
+
+
+
+
+
 resource "aws_api_gateway_deployment" "trigger_deployment" {
   depends_on = [
-    aws_api_gateway_integration.adhoc_lambda_integration,
-    aws_api_gateway_integration.scheduled_lambda_integration,
-    aws_api_gateway_integration.adhoc_options_integration,
+    aws_api_gateway_integration.lambda_integration,
+    aws_api_gateway_integration.options_integration,
   ]
 
   rest_api_id = aws_api_gateway_rest_api.trigger_api.id
@@ -607,12 +586,8 @@ resource "aws_api_gateway_deployment" "trigger_deployment" {
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.trigger_resource.id,
-      aws_api_gateway_resource.adhoc_resource.id,
-      aws_api_gateway_resource.scheduled_resource.id,
-      aws_api_gateway_method.adhoc_method.id,
-      aws_api_gateway_method.scheduled_method.id,
-      aws_api_gateway_integration.adhoc_lambda_integration.id,
-      aws_api_gateway_integration.scheduled_lambda_integration.id,
+      aws_api_gateway_method.trigger_method.id,
+      aws_api_gateway_integration.lambda_integration.id,
     ]))
   }
 
@@ -738,14 +713,9 @@ resource "aws_ecs_service" "report_service" {
 }
 
 # Outputs
-output "trigger_adhoc_url" {
-  description = "API Gateway URL for triggering ADHOC reports"
-  value       = "https://${aws_api_gateway_rest_api.trigger_api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_stage.prod.stage_name}/trigger/adhoc"
-}
-
-output "trigger_scheduled_url" {
-  description = "API Gateway URL for triggering SCHEDULED reports"
-  value       = "https://${aws_api_gateway_rest_api.trigger_api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_stage.prod.stage_name}/trigger/scheduled"
+output "trigger_url" {
+  description = "API Gateway URL for the unified trigger"
+  value       = "https://${aws_api_gateway_rest_api.trigger_api.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${aws_api_gateway_stage.prod.stage_name}/trigger"
 }
 
 output "ecs_cluster_arn" {
