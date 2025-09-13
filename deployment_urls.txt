@@ -1,5 +1,5 @@
 # Deployment URLs and Information
-# Generated on: Fri Sep 12 22:33:40 IST 2025
+# Generated on: Sat Sep 13 07:07:03 IST 2025
 
 ADHOC Trigger URL: https://fe44m0t8ah.execute-api.us-east-1.amazonaws.com/prod/trigger/adhoc
 SCHEDULED Trigger URL: https://fe44m0t8ah.execute-api.us-east-1.amazonaws.com/prod/trigger/scheduled

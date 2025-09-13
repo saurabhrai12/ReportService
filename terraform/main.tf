@@ -313,27 +313,6 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-resource "aws_iam_role_policy" "ecs_secrets_policy" {
-  name = "SecretsManagerAccess"
-  role = aws_iam_role.ecs_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue"
-        ]
-        Resource = [
-          aws_secretsmanager_secret.snowflake_user.arn,
-          aws_secretsmanager_secret.snowflake_password.arn
-        ]
-      }
-    ]
-  })
-}
-
 # IAM Role for ECS Task
 resource "aws_iam_role" "ecs_task_role" {
   name = "${var.project_name}-ecs-task-role"
@@ -355,6 +334,22 @@ resource "aws_iam_role" "ecs_task_role" {
     Name        = "${var.project_name}-ecs-task-role"
     Environment = var.environment
   }
+}
+
+resource "aws_iam_role_policy" "ecs_task_secrets_policy" {
+  name = "TaskSecretsManagerAccess"
+  role = aws_iam_role.ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = aws_secretsmanager_secret.snowflake_creds.arn
+      }
+    ]
+  })
 }
 
 resource "aws_iam_role_policy" "ecs_task_s3_policy" {
@@ -423,36 +418,29 @@ resource "aws_iam_role_policy" "ecs_task_cloudwatch_policy" {
 }
 
 # Secrets Manager
-resource "aws_secretsmanager_secret" "snowflake_user" {
-  name                    = "${var.project_name}/snowflake/username"
-  description             = "Snowflake username for report service"
-  recovery_window_in_days = 0 # For demo purposes - use 7-30 in production
+resource "aws_secretsmanager_secret" "snowflake_creds" {
+  name        = "${var.project_name}/snowflake"
+  description = "Snowflake credentials for report service"
 
   tags = {
-    Name        = "${var.project_name}-snowflake-user"
+    Name        = "${var.project_name}-snowflake-creds"
     Environment = var.environment
   }
 }
 
-resource "aws_secretsmanager_secret_version" "snowflake_user" {
-  secret_id     = aws_secretsmanager_secret.snowflake_user.id
-  secret_string = "your-snowflake-username"
-}
-
-resource "aws_secretsmanager_secret" "snowflake_password" {
-  name                    = "${var.project_name}/snowflake/password"
-  description             = "Snowflake password for report service"
-  recovery_window_in_days = 0 # For demo purposes - use 7-30 in production
-
-  tags = {
-    Name        = "${var.project_name}-snowflake-password"
-    Environment = var.environment
+resource "aws_secretsmanager_secret_version" "snowflake_creds" {
+  secret_id = aws_secretsmanager_secret.snowflake_creds.id
+  secret_string = jsonencode({
+    account   = var.snowflake_account
+    user      = "your-snowflake-username"
+    password  = "your-snowflake-password"
+    database  = "REPORTING_DB"
+    warehouse = "COMPUTE_WH"
+    schema    = "CONFIG"
+  })
+  lifecycle {
+    ignore_changes = [secret_string]
   }
-}
-
-resource "aws_secretsmanager_secret_version" "snowflake_password" {
-  secret_id     = aws_secretsmanager_secret.snowflake_password.id
-  secret_string = "your-snowflake-password"
 }
 
 # Lambda Function
@@ -719,16 +707,7 @@ resource "aws_ecs_task_definition" "report_task" {
         }
       ]
 
-      secrets = [
-        {
-          name      = "SNOWFLAKE_USER"
-          valueFrom = aws_secretsmanager_secret.snowflake_user.arn
-        },
-        {
-          name      = "SNOWFLAKE_PASSWORD"
-          valueFrom = aws_secretsmanager_secret.snowflake_password.arn
-        }
-      ]
+      
     }
   ])
 
@@ -794,10 +773,7 @@ output "api_gateway_id" {
   value       = aws_api_gateway_rest_api.trigger_api.id
 }
 
-output "secrets_manager_arns" {
-  description = "Secrets Manager ARNs for Snowflake credentials"
-  value = {
-    username = aws_secretsmanager_secret.snowflake_user.arn
-    password = aws_secretsmanager_secret.snowflake_password.arn
-  }
+output "secrets_manager_arn" {
+  description = "Secrets Manager ARN for the consolidated Snowflake credentials"
+  value       = aws_secretsmanager_secret.snowflake_creds.arn
 }

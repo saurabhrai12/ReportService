@@ -572,8 +572,7 @@ Report failed:
                     self.scale_down_when_idle()
                     break
                     
-                # Wait 30 minutes before checking again
-                time.sleep(1800)  # 30 minutes = 1800 seconds
+                
                 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")

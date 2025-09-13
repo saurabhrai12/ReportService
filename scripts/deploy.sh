@@ -212,6 +212,7 @@ run_deployment_tests() {
     # Get resource information
     local lambda_function=$(terraform output -raw lambda_function_name)
     local ecs_service=$(terraform output -raw ecs_service_arn)
+    local ecs_cluster=$(terraform output -raw ecs_cluster_arn)
     
     cd ..
     
@@ -234,7 +235,7 @@ run_deployment_tests() {
     
     # Test ECS service status
     log_info "Checking ECS service status: $ecs_service"
-    local service_status=$(aws ecs describe-services --services "$ecs_service" --region "$AWS_REGION" --query 'services[0].status' --output text)
+    local service_status=$(aws ecs describe-services --cluster "$ecs_cluster" --services "$ecs_service" --region "$AWS_REGION" --query 'services[0].status' --output text)
     
     if [ "$service_status" = "ACTIVE" ]; then
         log_success "ECS service is active"

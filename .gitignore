@@ -1,0 +1,24 @@
+# Python virtual environment
+/.venv/
+
+# IDE / Local Tooling
+/.claude/
+
+# Terraform state files
+# These are often sensitive and should not be committed to version control.
+# For team collaboration, use a remote backend like S3.
+*.tfstate
+*.tfstate.*
+
+# Terraform local cache and providers
+.terraform/
+/terraform/.terraform/
+/terraform/.terraform.lock.hcl
+
+# Build artifacts and generated files
+/deployment_urls.txt
+/terraform/lambda_function.zip
+
+# Test payloads
+/lambda_test_payload.json
+/test_payload.json
