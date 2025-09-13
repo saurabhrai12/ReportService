@@ -10,7 +10,7 @@ CREATE OR REPLACE API INTEGRATION AWS_ECS_TRIGGER_INTEGRATION
     API_PROVIDER = 'aws_api_gateway'
     API_AWS_ROLE_ARN = 'arn:aws:iam::203977009513:role/report-service-snowflake-integration-role'
     ENABLED = TRUE
-    API_ALLOWED_PREFIXES = ('https://il4ny59nvb.execute-api.us-east-1.amazonaws.com/')
+    API_ALLOWED_PREFIXES = ('https://5e41doe73l.execute-api.us-east-1.amazonaws.com/')
     COMMENT = 'Unified integration for triggering the ECS service from Snowflake';
 
 -- Update the external function with correct URL
@@ -20,7 +20,7 @@ API_INTEGRATION = AWS_ECS_TRIGGER_INTEGRATION
 HEADERS = ('Content-Type' = 'application/json')
 MAX_BATCH_ROWS = 1
 COMMENT = 'Triggers the generic report processing endpoint in ECS'
-AS 'https://il4ny59nvb.execute-api.us-east-1.amazonaws.com/prod/trigger';
+AS 'https://5e41doe73l.execute-api.us-east-1.amazonaws.com/prod/trigger';
 
 -- Unified stored procedure to send the ECS trigger
 CREATE OR REPLACE PROCEDURE REPORTING_DB.CONFIG.SEND_ECS_TRIGGER()
@@ -31,56 +31,36 @@ $$
 DECLARE
     change_count INTEGER DEFAULT 0;
     trigger_response STRING;
-    rows_processed INTEGER DEFAULT 0;
 BEGIN
     SELECT COUNT(*) INTO change_count FROM REPORTING_DB.CONFIG.V_INSERT_STREAM_DATA;
-    
+
     IF (change_count > 0) THEN
-        -- Consume the stream data by inserting into a temporary table
-        CREATE OR REPLACE TEMPORARY TABLE TEMP_STREAM_CONSUMED AS 
-        SELECT CONFIG_ID, TRIGGER_TYPE, REPORT_NAME, METADATA$ACTION, METADATA$ISUPDATE, METADATA$ROW_ID
-        FROM REPORTING_DB.CONFIG.V_INSERT_STREAM_DATA;
-        
-        SELECT COUNT(*) INTO rows_processed FROM TEMP_STREAM_CONSUMED;
-        
+        -- Consume the stream data
+        CREATE OR REPLACE TEMPORARY TABLE TEMP_STREAM_CONSUMED AS
+        SELECT * FROM REPORTING_DB.CONFIG.V_INSERT_STREAM_DATA;
+
+        -- Call the external function to trigger ECS
         SELECT TRIGGER_ECS_SERVICE()::STRING INTO trigger_response;
-        
+
+        -- Log success
         INSERT INTO REPORTING_DB.CONFIG.TRIGGER_AUDIT_LOG (
             TRIGGER_TYPE,
             TRIGGER_COUNT,
             TRIGGER_TIMESTAMP,
-            ERROR_MESSAGE,
+            TRIGGER_RESPONSE,
             STATUS
         ) VALUES (
             'UNIFIED',
-            rows_processed,
+            change_count,
             CURRENT_TIMESTAMP(),
             trigger_response,
             'SUCCESS'
         );
 
-        RETURN 'Unified trigger sent to ECS service for ' || rows_processed || ' new reports. ECS triggered successfully.';
+        RETURN 'SUCCESS: Triggered ECS for ' || change_count || ' reports';
     ELSE
         RETURN 'No new reports to trigger.';
     END IF;
-
-EXCEPTION
-    WHEN OTHER THEN
-        INSERT INTO REPORTING_DB.CONFIG.TRIGGER_AUDIT_LOG (
-            TRIGGER_TYPE,
-            TRIGGER_COUNT,
-            TRIGGER_TIMESTAMP,
-            ERROR_MESSAGE,
-            STATUS
-        ) VALUES (
-            'UNIFIED',
-            0,
-            CURRENT_TIMESTAMP(),
-            'Stored procedure error occurred',
-            'ERROR'
-        );
-
-        RETURN 'Error sending UNIFIED trigger';
 END;
 $$;
 

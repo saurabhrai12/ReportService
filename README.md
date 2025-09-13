@@ -29,25 +29,19 @@ A production-ready, scalable report generation service built on AWS with Snowfla
 
 ## 🏗️ Architecture
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   API Gateway   │────│  Lambda Functions │────│   ECS Service   │
-│   (Triggers)    │    │  (ADHOC/SCHEDULED)│    │ (Report Engine) │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                        │                        │
-         │                        └────────────────────────┼──────────┐
-         │                                                 │          │
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐  │
-│   Snowflake     │────│   AWS Secrets    │────│   CloudWatch    │  │
-│  (Data Source)  │    │    Manager       │    │   (Monitoring)  │  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘  │
-                                                                     │
-┌─────────────────────────────────────────────────────────────────┘
-│
-├── Snowflake Streams & Tasks (Change Detection)
-├── External Functions (API Gateway Integration)  
-└── Views & Stored Procedures (Data Processing)
-```
+The architecture uses a simple, event-driven flow from Snowflake to AWS:
+
+**Snowflake:**
+1.  **`REPORT_CONFIG` Table**: Stores all report requests.
+2.  **`..._INSERT_STREAM`**: A single stream captures any new report inserted into the table.
+3.  **`ECS_TRIGGER_TASK`**: A single task runs every 2 minutes, checks the stream for data.
+4.  **`SEND_ECS_TRIGGER` Procedure**: If the stream has data, the task calls this procedure.
+5.  **`TRIGGER_ECS_SERVICE` Function**: The procedure calls this external function.
+
+**AWS:**
+6.  **API Gateway**: The external function makes a secure call to a single `/trigger` endpoint.
+7.  **Lambda Function**: The API Gateway invokes a single, generic Lambda function.
+8.  **ECS Service**: The Lambda function starts the ECS service by setting its desired count to 1. The service runs the report engine, processes ALL pending reports from the Snowflake table, and then automatically scales back down to 0.
 
 ## 📋 Prerequisites
 
@@ -100,17 +94,18 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 
 ### 4. Snowflake Database Setup
 
-Execute the SQL scripts in order:
+Execute the SQL scripts in the `snowflake/` directory in numerical order (`01` to `04`). After you run the main deployment script (`deploy.sh`), it will generate a final script named `snowflake/run_after_deploy.sql`. You must run this script last to finalize the connection from Snowflake to your new AWS API Gateway endpoint.
+
 ```bash
 # Connect to Snowflake and run:
-USE ROLE CORTEX_USER_ROLE;
+USE ROLE CORTEX_USER_ROLE; # Or your appropriate role
 
 # Execute scripts in order:
 # 1. snowflake/01_enhanced_config_table.sql
 # 2. snowflake/02_streams_setup.sql  
 # 3. snowflake/03_stored_procedures.sql
 # 4. snowflake/04_tasks_setup.sql
-# 5. snowflake/05_api_integration_setup.sql
+# 5. snowflake/run_after_deploy.sql (After running ./scripts/deploy.sh)
 ```
 
 ### 5. Configure Secrets
@@ -133,33 +128,22 @@ aws secretsmanager create-secret \
 
 ## 🎯 Usage
 
-### ADHOC Reports (Immediate Processing)
+### Triggering the Report Service
+
+The simplified architecture uses a single, generic trigger. Any new report inserted into the Snowflake `REPORT_CONFIG` table will be detected, and a trigger will be sent to start the ECS service. The service will then process all available pending reports.
+
+You can manually trigger the service to wake it up and process any pending reports using the following API call:
 
 ```bash
 # Trigger via API Gateway
-curl -X POST https://<api-gateway-id>.execute-api.<region>.amazonaws.com/prod/trigger/adhoc \
+curl -X POST https://<api-gateway-id>.execute-api.<region>.amazonaws.com/prod/trigger \
   -H "Content-Type: application/json" \
-  -d '{
-    "report_type": "SALES",
-    "priority": 1,
-    "config": {"date_range": "last_7_days"}
-  }'
+  -d '{}' # The body can be empty as the service processes all pending reports from the database
 
-# Or use test payload
+# Or use the updated test payload script
 ./scripts/invoke_lambdas.sh
 ```
 
-### SCHEDULED Reports (Time-Based)
-
-```bash  
-# Trigger via API Gateway
-curl -X POST https://<api-gateway-id>.execute-api.<region>.amazonaws.com/prod/trigger/scheduled \
-  -H "Content-Type: application/json" \
-  -d '{
-    "batch_mode": true,
-    "max_reports": 10
-  }'
-```
 
 ### Monitor Status
 
@@ -307,23 +291,16 @@ jobs:
 
 ## 📝 API Reference
 
-### Trigger Endpoints
+### Trigger Endpoint
 
-**ADHOC Reports**
-- **URL**: `POST /prod/trigger/adhoc`
-- **Payload**: `{"report_type": "string", "priority": number, "config": object}`
-- **Response**: `{"status": "triggered", "timestamp": "ISO-8601"}`
-
-**SCHEDULED Reports**  
-- **URL**: `POST /prod/trigger/scheduled`
-- **Payload**: `{"batch_mode": boolean, "max_reports": number}`
-- **Response**: `{"status": "triggered", "batch_size": number}`
+**Unified Trigger**
+- **URL**: `POST /prod/trigger`
+- **Payload**: The request body is optional and currently not used. Any valid JSON object (e.g., `{}`) is sufficient.
+- **Response**: `{"message": "ECS service triggered successfully...", ...}`
 
 ### Status Codes
 - **200**: Success
-- **400**: Invalid request payload
 - **500**: Internal server error
-- **503**: Service unavailable (scaling in progress)
 
 ## 📄 License
 

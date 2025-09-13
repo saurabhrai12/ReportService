@@ -4,6 +4,7 @@
 USE REPORTING_DB.CONFIG;
 
 -- Drop existing streams if they exist (for clean setup)
+
 DROP STREAM IF EXISTS REPORTING_DB.CONFIG.REPORT_CONFIG_INSERT_STREAM; -- Drop new one too for idempotency
 
 -- Create a single stream for all new report insertions

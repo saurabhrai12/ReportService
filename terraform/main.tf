@@ -90,77 +90,63 @@ ecs_client = boto3.client('ecs')
 
 def lambda_handler(event, context):
     try:
-        # Extract trigger type from the request path or body
-        trigger_type = 'ADHOC'  # Default
-        
-        # Check if trigger type is specified in the path
-        if 'pathParameters' in event and event['pathParameters']:
-            if 'trigger_type' in event['pathParameters']:
-                trigger_type = event['pathParameters']['trigger_type'].upper()
-        
-        # Check if trigger type is in the request body
-        if 'body' in event and event['body']:
-            try:
-                body = json.loads(event['body'])
-                if 'trigger_type' in body:
-                    trigger_type = body['trigger_type'].upper()
-            except json.JSONDecodeError:
-                pass
-        
-        logger.info(f"Processing {trigger_type} trigger request")
+        logger.info(f"Processing trigger request")
         
         service_arn = os.environ['ECS_SERVICE_ARN']
         
         # Extract cluster and service name from ARN
-        # ARN format: arn:aws:ecs:region:account:service/cluster-name/service-name
         arn_parts = service_arn.split('/')
-        if len(arn_parts) >= 3:
-            cluster_name = arn_parts[-2]
-            service_name = arn_parts[-1]
-        else:
-            # Fallback to default cluster if parsing fails
-            cluster_name = 'default'
-            service_name = service_arn
+        cluster_name = arn_parts[-2] if len(arn_parts) >= 3 else 'default'
+        service_name = arn_parts[-1] if len(arn_parts) >= 2 else service_arn
         
         logger.info(f"Updating ECS service: {service_name} in cluster: {cluster_name}")
         
         # Update service desired count to 1 (wake it up)
-        response = ecs_client.update_service(
+        ecs_client.update_service(
             cluster=cluster_name,
             service=service_name,
             desiredCount=1
         )
         
-        logger.info(f"ECS service update response: {response}")
-        
+        # Format the successful response for Snowflake
+        success_payload = {
+            'message': 'ECS service triggered successfully',
+            'service': service_arn
+        }
+
+        # Snowflake expects the response body to be a JSON object with a "data" key.
+        # The value is an array of arrays, where each inner array is [row_number, value].
+        snowflake_response_body = {
+            "data": [
+                [0, success_payload] # Row number 0, with our success message as the value
+            ]
+        }
+
         return {
             'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-            },
-            'body': json.dumps({
-                'message': f'ECS service triggered successfully for {trigger_type} processing',
-                'service': service_arn,
-                'trigger_type': trigger_type,
-                'desired_count': 1,
-                'timestamp': context.aws_request_id
-            })
+            'headers': { 'Content-Type': 'application/json' },
+            'body': json.dumps(snowflake_response_body)
         }
         
     except Exception as e:
         logger.error(f"Error: {str(e)}", exc_info=True)
+        
+        # Format the error response for Snowflake in the required structure
+        error_payload = {
+            'error': str(e),
+            'message': 'Failed to trigger ECS service'
+        }
+        snowflake_error_body = {
+            "data": [
+                [0, error_payload]
+            ]
+        }
+
+        # Return a 200 status code so Snowflake can parse the error from the body
         return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json'
-            },
-            'body': json.dumps({
-                'error': str(e),
-                'message': 'Failed to trigger ECS service'
-            })
+            'statusCode': 200,
+            'headers': { 'Content-Type': 'application/json' },
+            'body': json.dumps(snowflake_error_body)
         }
 EOF
     filename = "index.py"
@@ -259,7 +245,23 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
 resource "aws_iam_role" "snowflake_integration_role" {
   name = "${var.project_name}-snowflake-integration-role"
 
-  assume_role_policy = file("../fix_snowflake_trust_policy.json")
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::529587499086:user/wnu31000-s"
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          StringEquals = {
+            "sts:ExternalId" = "PLACEHOLDER_EXTERNAL_ID"
+          }
+        }
+      }
+    ]
+  })
 
   tags = {
     Name        = "${var.project_name}-snowflake-role"

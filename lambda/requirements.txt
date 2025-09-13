@@ -1,9 +1,0 @@
-# AWS Lambda Requirements
-# Note: boto3 and botocore are already available in the Lambda runtime
-
-# Only add if you need specific versions
-# boto3==1.29.0
-# botocore==1.32.0
-
-# Add any additional dependencies here
-# requests==2.31.0
