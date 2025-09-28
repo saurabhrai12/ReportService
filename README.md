@@ -1,326 +1,263 @@
-# Enhanced Report Service
+# Snowflake Processor System
 
-A production-ready, scalable report generation service built on AWS with Snowflake integration, supporting dual trigger modes (ADHOC and SCHEDULED) with automatic scaling capabilities.
+A serverless system for processing Snowflake queue entries using AWS Lambda, ECS Fargate, and external services with SSL certificate authentication.
 
-> **📋 Project Status**: This project has been successfully developed and tested. The AWS infrastructure has been decommissioned but all source code, documentation, and deployment scripts remain available for reference or future deployment.
+## Architecture
 
-## 🚀 Features
+The system uses a polling architecture where:
+1. EventBridge triggers a Lambda function every minute
+2. Lambda queries Snowflake for pending entries
+3. Lambda calculates the number of containers needed
+4. Lambda launches ECS Fargate tasks to process entries
+5. ECS containers process entries by calling external services
+6. Results are updated back to Snowflake
 
-### Core Capabilities
-- **Dual Trigger Architecture**: Support for both immediate ADHOC reports and time-based SCHEDULED reports
-- **Auto-Scaling**: ECS service automatically scales to 0 when idle and scales up when work is available
-- **Cloud-Native**: Fully serverless architecture using AWS services
-- **High Performance**: Parallel processing with optimized resource utilization
-- **Cost Efficient**: 30-minute polling interval with intelligent scaling
+## Features
 
-### Integration Support
-- **Snowflake Integration**: Native integration with Snowflake data warehouse
-- **AWS Secrets Manager**: Secure credential management
-- **API Gateway**: RESTful triggers for external systems
-- **CloudWatch**: Comprehensive monitoring and logging
-- **Lambda Functions**: Serverless trigger endpoints
+- **Serverless scaling**: Automatically scales processing containers based on queue depth
+- **Fault tolerance**: Automatic retry logic and stale entry recovery
+- **SSL/TLS security**: Secure communication with external services using client certificates
+- **Monitoring**: Comprehensive CloudWatch dashboards and alarms
+- **Cost efficient**: Pay-per-use model with automatic shutdown of idle containers
 
-### Report Management
-- **Priority-Based Processing**: ADHOC reports processed with high priority
-- **Status Tracking**: Real-time report status (PENDING → PROCESSING → COMPLETED/FAILED)
-- **Multiple Output Formats**: Support for PDF, EXCEL, CSV formats
-- **Notification System**: Email/SNS notifications on completion
-- **Audit Trail**: Complete processing history and metrics
+## Quick Start
 
-## 🏗️ Architecture
-
-The architecture uses a simple, event-driven flow from Snowflake to AWS:
-
-**Snowflake:**
-1.  **`REPORT_CONFIG` Table**: Stores all report requests.
-2.  **`..._INSERT_STREAM`**: A single stream captures any new report inserted into the table.
-3.  **`ECS_TRIGGER_TASK`**: A single task runs every 2 minutes, checks the stream for data.
-4.  **`SEND_ECS_TRIGGER` Procedure**: If the stream has data, the task calls this procedure.
-5.  **`TRIGGER_ECS_SERVICE` Function**: The procedure calls this external function.
-
-**AWS:**
-6.  **API Gateway**: The external function makes a secure call to a single `/trigger` endpoint.
-7.  **Lambda Function**: The API Gateway invokes a single, generic Lambda function.
-8.  **ECS Service**: The Lambda function starts the ECS service by setting its desired count to 1. The service runs the report engine, processes ALL pending reports from the Snowflake table, and then automatically scales back down to 0.
-
-## 📋 Prerequisites
+### Prerequisites
 
 - AWS CLI configured with appropriate permissions
 - Terraform >= 1.0
-- Docker with BuildKit support
-- Snowflake account with:
-  - CORTEX_USER_ROLE permissions
-  - COMPUTE_WH warehouse access
-  - REPORTING_DB database access
+- Docker
+- SnowSQL (for database setup)
+- jq (for JSON processing)
 
-## 🛠️ Setup Instructions
-
-> **⚠️ Infrastructure Removed**: The AWS infrastructure for this project has been destroyed. The codebase remains available for reference and future deployment.
-
-### 1. Environment Configuration
+### 1. Configuration
 
 ```bash
-# Clone and setup
-git clone <repository-url>
-cd ReportService
-
-# Configure AWS credentials (if deploying)
-aws configure
-
-# Create Python virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Snowflake Setup
-
-```bash
-# Update Snowflake configuration (if deploying)
+# Copy and configure Terraform variables
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-
-# Edit terraform.tfvars with your values:
-# snowflake_account = "YOUR-ACCOUNT-ID"
-# aws_region = "us-east-1"
-# environment = "production"
+# Edit terraform/terraform.tfvars with your values
 ```
 
-### 3. Deploy Infrastructure (Optional)
+### 2. Deploy Infrastructure
 
 ```bash
-# Deploy all AWS resources (if needed)
-./scripts/deploy.sh --image-tag <account-id>.dkr.ecr.<region>.amazonaws.com/report-service:latest
+./scripts/deploy.sh dev us-east-1
 ```
 
-### 4. Snowflake Database Setup
-
-Execute the SQL scripts in the `snowflake/` directory in numerical order (`01` to `04`). After you run the main deployment script (`deploy.sh`), it will generate a final script named `snowflake/run_after_deploy.sql`. You must run this script last to finalize the connection from Snowflake to your new AWS API Gateway endpoint.
+### 3. Setup Database
 
 ```bash
-# Connect to Snowflake and run:
-USE ROLE CORTEX_USER_ROLE; # Or your appropriate role
-
-# Execute scripts in order:
-# 1. snowflake/01_enhanced_config_table.sql
-# 2. snowflake/02_streams_setup.sql  
-# 3. snowflake/03_stored_procedures.sql
-# 4. snowflake/04_tasks_setup.sql
-# 5. snowflake/run_after_deploy.sql (After running ./scripts/deploy.sh)
+export SNOWFLAKE_ACCOUNT="your-account"
+export SNOWFLAKE_USER="your-user"
+export SNOWFLAKE_PASSWORD="your-password"
+./scripts/setup_database.sh
 ```
 
-### 5. Configure Secrets
+### 4. Upload SSL Certificates
 
-Update AWS Secrets Manager with Snowflake credentials:
-```bash
-# Create consolidated secret
-aws secretsmanager create-secret \
-  --name "report-service/snowflake" \
-  --description "Snowflake credentials for report service" \
-  --secret-string '{
-    "account": "YOUR-ACCOUNT-ID",
-    "user": "YOUR-USERNAME", 
-    "password": "YOUR-PASSWORD",
-    "database": "REPORTING_DB",
-    "warehouse": "COMPUTE_WH",
-    "schema": "CONFIG"
-  }'
-```
-
-## 🎯 Usage
-
-### Triggering the Report Service
-
-The simplified architecture uses a single, generic trigger. Any new report inserted into the Snowflake `REPORT_CONFIG` table will be detected, and a trigger will be sent to start the ECS service. The service will then process all available pending reports.
-
-You can manually trigger the service to wake it up and process any pending reports using the following API call:
+Upload your SSL certificates to the S3 bucket created by Terraform:
 
 ```bash
-# Trigger via API Gateway
-curl -X POST https://<api-gateway-id>.execute-api.<region>.amazonaws.com/prod/trigger \
-  -H "Content-Type: application/json" \
-  -d '{}' # The body can be empty as the service processes all pending reports from the database
-
-# Or use the updated test payload script
-./scripts/invoke_lambdas.sh
+# Upload to: s3://dev-snowflake-processor-certs/dev/
+aws s3 cp client.pem s3://dev-snowflake-processor-certs/dev/
+aws s3 cp client-key.pem s3://dev-snowflake-processor-certs/dev/
+aws s3 cp ca-cert.pem s3://dev-snowflake-processor-certs/dev/
 ```
 
-
-### Monitor Status
+### 5. Setup Monitoring
 
 ```bash
-# Check ECS service status
-aws ecs describe-services --cluster report-service-cluster --services report-service
-
-# View logs
-aws logs tail /ecs/report-service --follow
+./scripts/setup_monitoring.sh dev us-east-1
 ```
 
-## 📊 Monitoring & Operations
+### 6. Test the System
 
-### CloudWatch Dashboards
-- **ECS Metrics**: Task count, CPU/memory utilization
-- **Lambda Metrics**: Invocation count, duration, errors
-- **Snowflake Metrics**: Connection status, query performance
+```bash
+./scripts/test_system.sh dev
+```
+
+## Project Structure
+
+```
+.
+├── terraform/              # Infrastructure as Code
+│   ├── main.tf             # Main Terraform configuration
+│   ├── vpc.tf              # VPC and networking
+│   ├── ecs.tf              # ECS cluster and task definitions
+│   ├── lambda.tf           # Lambda function configuration
+│   ├── iam.tf              # IAM roles and policies
+│   ├── secrets.tf          # Secrets Manager configuration
+│   └── s3.tf               # S3 bucket for certificates
+├── lambda_poller/          # Lambda function code
+│   ├── index.py            # Main Lambda handler
+│   └── requirements.txt    # Python dependencies
+├── container/              # ECS container application
+│   ├── processor.py        # Main processor application
+│   ├── requirements.txt    # Python dependencies
+│   └── Dockerfile          # Container image definition
+├── snowflake/              # Database schema and setup
+│   ├── 01_create_table.sql # Main table creation
+│   ├── 02_sample_data.sql  # Sample data for testing
+│   └── 03_monitoring_views.sql # Monitoring views
+├── scripts/                # Deployment and utility scripts
+│   ├── deploy.sh           # Main deployment script
+│   ├── setup_database.sh   # Database setup
+│   ├── test_system.sh      # System testing
+│   ├── setup_monitoring.sh # Monitoring setup
+│   └── cleanup.sh          # Infrastructure cleanup
+├── monitoring/             # Monitoring configuration
+│   ├── cloudwatch_alarms.tf # CloudWatch alarms
+│   └── cloudwatch_dashboard.json # Dashboard definition
+└── docker-compose.yml     # Local development setup
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `ENVIRONMENT` | Environment name (dev/staging/prod) | Yes |
+| `SNOWFLAKE_ACCOUNT` | Snowflake account identifier | Yes |
+| `SNOWFLAKE_USER` | Snowflake username | Yes |
+| `SNOWFLAKE_PASSWORD` | Snowflake password | Yes |
+| `SNOWFLAKE_WAREHOUSE` | Snowflake warehouse name | Yes |
+| `SNOWFLAKE_DATABASE` | Snowflake database name | Yes |
+| `SNOWFLAKE_SCHEMA` | Snowflake schema name | Yes |
+| `SNOWFLAKE_TABLE` | Snowflake table name | Yes |
+| `EXTERNAL_SERVICE_URL` | URL of external service to call | Yes |
+| `ALERT_EMAIL` | Email for CloudWatch alerts | No |
+
+### Processing Configuration
+
+- **Entries per container**: 8 (configurable in Lambda code)
+- **Max containers**: 25 (configurable in Lambda code)
+- **Stale threshold**: 30 minutes (configurable in Lambda code)
+- **Container timeout**: 60 seconds
+- **External service timeout**: 30 seconds
+
+## Monitoring
+
+### CloudWatch Dashboard
+
+Access the dashboard at:
+```
+https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=dev-snowflake-processor
+```
 
 ### Key Metrics
-- Reports processed per hour
-- Average processing time
-- Error rates and types
-- Cost optimization metrics
 
-### Operational Commands
+- Lambda invocations and errors
+- ECS CPU and memory utilization
+- ECS task counts
+- Processing completion rates
 
-```bash
-# Scale service manually
-aws ecs update-service --cluster report-service-cluster --service report-service --desired-count 1
+### Alarms
 
-# Force new deployment
-aws ecs update-service --cluster report-service-cluster --service report-service --force-new-deployment
+- Lambda function errors
+- Lambda function duration
+- ECS high CPU utilization
+- ECS high memory utilization
 
-# Check Snowflake integration
-python test_snowflake_connection.py
+### Snowflake Monitoring Views
+
+```sql
+-- Queue status summary
+SELECT * FROM QUEUE_STATUS_SUMMARY;
+
+-- Daily processing metrics
+SELECT * FROM PROCESSING_METRICS;
+
+-- Processor performance
+SELECT * FROM PROCESSOR_PERFORMANCE;
+
+-- Stale entries
+SELECT * FROM STALE_ENTRIES;
+
+-- Failed entries analysis
+SELECT * FROM FAILED_ENTRIES_ANALYSIS;
 ```
 
-## 🔧 Configuration
+## Development
 
-### Report Types
-Configure in `snowflake/01_enhanced_config_table.sql`:
-- **ADHOC**: Immediate processing, high priority
-- **SCHEDULED**: Time-based processing, batch mode
+### Local Testing
 
-### Polling Frequency
-Default: 30 minutes (configurable in `src/report_service.py:576`)
+1. Set up environment variables in `.env` file
+2. Run with Docker Compose:
 
-### Output Formats
-- PDF: High-quality formatted reports
-- EXCEL: Data analysis and manipulation
-- CSV: Raw data export
+```bash
+docker-compose up --build
+```
 
-### Notification Settings
-- Email recipients per report
-- SNS topic integration
-- Slack webhook support (optional)
+### Adding New Entry Types
 
-## 🚦 Troubleshooting
+1. Insert data into the `PROCESSING_QUEUE` table:
+
+```sql
+INSERT INTO PROCESSING_QUEUE (data) VALUES
+('{"type": "new_type", "payload": {...}}');
+```
+
+2. The system will automatically pick up and process new entries
+
+## Troubleshooting
 
 ### Common Issues
 
-**Snowflake Connection Failed**
+1. **Lambda timeouts**: Check Snowflake connectivity and increase timeout if needed
+2. **ECS tasks failing**: Check SSL certificates are uploaded correctly
+3. **No entries processed**: Verify Snowflake credentials and table permissions
+4. **High costs**: Adjust `MAX_CONTAINERS` and `ENTRIES_PER_CONTAINER` settings
+
+### Logs
+
 ```bash
-# Check credentials
-aws secretsmanager get-secret-value --secret-id report-service/snowflake
+# Lambda logs
+aws logs tail /aws/lambda/dev-snowflake-poller --follow
 
-# Test connection
-source .venv/bin/activate
-python test_snowflake_connection.py
+# ECS logs
+aws logs tail /ecs/dev-snowflake-processor --follow
 ```
 
-**ECS Task Failing**
+### Manual Testing
+
 ```bash
-# Check logs
-aws logs get-log-events --log-group-name "/ecs/report-service" \
-  --log-stream-name $(aws logs describe-log-streams --log-group-name "/ecs/report-service" \
-  --order-by LastEventTime --descending --max-items 1 --query 'logStreams[0].logStreamName' --output text)
+# Invoke Lambda manually
+aws lambda invoke --function-name dev-snowflake-poller --payload '{}' result.json
+
+# Check ECS tasks
+aws ecs list-tasks --cluster dev-snowflake-processor
 ```
 
-**Lambda Permission Errors**
+## Security
+
+- All communication uses HTTPS/TLS
+- SSL client certificates for external service authentication
+- Secrets stored in AWS Secrets Manager
+- IAM roles with minimal required permissions
+- VPC isolation for ECS tasks
+
+## Cost Optimization
+
+- Containers automatically shut down when no work available
+- CloudWatch log retention set to 30 days
+- ECS Fargate spot instances can be used for cost savings
+- Monitoring helps identify optimization opportunities
+
+## Cleanup
+
+To destroy all infrastructure:
+
 ```bash
-# Check IAM roles
-aws iam get-role-policy --role-name report-service-lambda-role --policy-name LambdaECSAccess
+./scripts/cleanup.sh dev
 ```
 
-### Debug Mode
-Enable verbose logging by setting `LOG_LEVEL=DEBUG` in ECS task definition.
+**Note**: This will stop all running tasks and destroy all AWS resources. Snowflake tables are not automatically deleted.
 
-## 📈 Performance Optimization
-
-### Scaling Configuration
-- **Min Capacity**: 0 (cost-efficient)
-- **Max Capacity**: 10 (configurable)
-- **Scaling Trigger**: Queue depth > 5 reports
-
-### Resource Allocation
-- **CPU**: 512 (0.5 vCPU)
-- **Memory**: 1024 MB
-- **Network**: awsvpc mode with public IP
-
-### Database Optimization
-- Snowflake streams for change detection
-- Indexed queries on CONFIG_ID and STATUS
-- Batch processing for scheduled reports
-
-## 🛡️ Security
-
-### AWS IAM Roles
-- **Lambda Execution Role**: ECS service control
-- **ECS Task Role**: Secrets Manager + Snowflake access
-- **Snowflake Integration Role**: API Gateway invoke permissions
-
-### Network Security
-- ECS tasks in private subnets (optional)
-- Security groups with minimal required ports
-- API Gateway with authentication (optional)
-
-### Data Protection
-- Secrets encrypted at rest in Secrets Manager
-- TLS encryption for all API communications
-- Snowflake OCSP certificate validation
-
-## 🔄 CI/CD Integration
-
-### GitHub Actions (Example)
-```yaml
-name: Deploy Report Service
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Deploy to AWS
-        run: ./scripts/deploy.sh --image-tag ${{ secrets.ECR_REGISTRY }}/report-service:${{ github.sha }}
-```
-
-### Deployment Pipeline
-1. **Build**: Docker image with latest code
-2. **Test**: Unit tests + integration tests  
-3. **Deploy**: Terraform apply + ECS service update
-4. **Verify**: Health checks + smoke tests
-
-## 📝 API Reference
-
-### Trigger Endpoint
-
-**Unified Trigger**
-- **URL**: `POST /prod/trigger`
-- **Payload**: The request body is optional and currently not used. Any valid JSON object (e.g., `{}`) is sufficient.
-- **Response**: `{"message": "ECS service triggered successfully...", ...}`
-
-### Status Codes
-- **200**: Success
-- **500**: Internal server error
-
-## 📄 License
-
-MIT License - see LICENSE file for details.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/new-feature`)
-3. Commit changes (`git commit -am 'Add new feature'`)
-4. Push to branch (`git push origin feature/new-feature`)
-5. Create Pull Request
-
-## 📞 Support
+## Support
 
 For issues and questions:
-- Create GitHub issue for bugs/features
-- Check CloudWatch logs for operational issues  
-- Review Snowflake query history for data problems
-
----
-
-**Built with ❤️ using AWS, Snowflake, and modern DevOps practices**
+1. Check the troubleshooting section
+2. Review CloudWatch logs
+3. Verify configuration settings
+4. Check AWS service limits

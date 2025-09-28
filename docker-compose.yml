@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  processor:
+    build:
+      context: ./container
+      dockerfile: Dockerfile
+    environment:
+      - PROCESSOR_ID=local-test
+      - MAX_ENTRIES=5
+      - ENVIRONMENT=dev
+      - CERT_BUCKET=dev-snowflake-processor-certs
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - SNOWFLAKE_TABLE=${SNOWFLAKE_TABLE}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - EXTERNAL_SERVICE_URL=${EXTERNAL_SERVICE_URL:-https://api.example.com/process}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      - ~/.aws:/home/processor/.aws:ro
+    networks:
+      - processor-network
+
+networks:
+  processor-network:
+    driver: bridge
